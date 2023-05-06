@@ -15,6 +15,7 @@
 		"monaco-languageclient": "^4.0.3",
 		"plotly.js-dist-min": "^2.22.0",
 		"remixicon": "^2.5.0",
+		"tailwind-safelist-generator": "^1.0.0",
 		"typescript": "^5.0.4",
 		"vega": "^5.22.1",
 		"vega-embed": "^6.22.1",
