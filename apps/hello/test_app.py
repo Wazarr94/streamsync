@@ -1,9 +1,8 @@
-import pandas as pd
 import main
+import pandas as pd
 
 
 class TestApp:
-
     app_state = main.ss.initial_state
 
     def test_handle_timer_tick(self):
@@ -19,7 +18,6 @@ class TestApp:
         assert len(hml) > 0
 
     def test_metrics(self):
-
         data = {
             "weight_g": [3000, 3500, 3200, 3100, 2900, 3300],
             "length_cm": [50, 52, 51, 48, 47, 53],

@@ -1,22 +1,34 @@
 import asyncio
-import multiprocessing
-import threading
-from typing import Any, Dict, List, Optional, Union
+import logging
+import os
 import typing
-from fastapi import FastAPI, Request, HTTPException
+from typing import Any, Dict, Optional, Union
+from urllib.parse import urlsplit
+
+import uvicorn
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 from starlette.websockets import WebSocket, WebSocketDisconnect
-from streamsync.ss_types import (AppProcessServerResponse, ComponentUpdateRequestPayload, EventResponsePayload, InitRequestBody, InitResponseBodyEdit,
-                                 InitResponseBodyRun, InitSessionRequestPayload, InitSessionResponsePayload, ServeMode, StreamsyncEvent, StreamsyncWebsocketIncoming, StreamsyncWebsocketOutgoing)
-import os
-import uvicorn
-from streamsync.app_runner import AppRunner
-from urllib.parse import urlsplit
-import logging
-from streamsync import VERSION
 
-MAX_WEBSOCKET_MESSAGE_SIZE = 201*1024*1024
+from streamsync import VERSION
+from streamsync.app_runner import AppRunner
+from streamsync.ss_types import (
+    AppProcessServerResponse,
+    ComponentUpdateRequestPayload,
+    EventResponsePayload,
+    InitRequestBody,
+    InitResponseBodyEdit,
+    InitResponseBodyRun,
+    InitSessionRequestPayload,
+    InitSessionResponsePayload,
+    ServeMode,
+    StreamsyncEvent,
+    StreamsyncWebsocketIncoming,
+    StreamsyncWebsocketOutgoing,
+)
+
+MAX_WEBSOCKET_MESSAGE_SIZE = 201 * 1024 * 1024
 
 
 def get_asgi_app(user_app_path: str, serve_mode: ServeMode) -> FastAPI:
@@ -45,7 +57,7 @@ def get_asgi_app(user_app_path: str, serve_mode: ServeMode) -> FastAPI:
             sessionId=payload.sessionId,
             userState=payload.userState,
             mail=payload.mail,
-            components=payload.components
+            components=payload.components,
         )
 
     def _get_edit_starter_pack(payload: InitSessionResponsePayload):
@@ -60,12 +72,13 @@ def get_asgi_app(user_app_path: str, serve_mode: ServeMode) -> FastAPI:
             components=payload.components,
             userFunctions=payload.userFunctions,
             savedCode=saved_code,
-            runCode=run_code
+            runCode=run_code,
         )
 
     @asgi_app.post("/api/init")
-    async def init(initBody: InitRequestBody, request: Request) -> Union[InitResponseBodyRun, InitResponseBodyEdit]:
-
+    async def init(
+        initBody: InitRequestBody, request: Request
+    ) -> Union[InitResponseBodyRun, InitResponseBodyEdit]:
         """
         Handles session init and provides a "starter pack" to the frontend.
         """
@@ -75,13 +88,17 @@ def get_asgi_app(user_app_path: str, serve_mode: ServeMode) -> FastAPI:
             wrong_origin_message = "A session request with origin %s was rejected. For security reasons, only local origins are allowed in edit mode."
             logging.error(wrong_origin_message, origin_header)
             raise HTTPException(
-                status_code=403, detail="Incorrect origin. Only local origins are allowed.")
+                status_code=403,
+                detail="Incorrect origin. Only local origins are allowed.",
+            )
 
-        response = await app_runner.init_session(InitSessionRequestPayload(
-            cookies=dict(request.cookies),
-            headers=dict(request.headers),
-            proposedSessionId=initBody.proposedSessionId
-        ))
+        response = await app_runner.init_session(
+            InitSessionRequestPayload(
+                cookies=dict(request.cookies),
+                headers=dict(request.headers),
+                proposedSessionId=initBody.proposedSessionId,
+            )
+        )
         status = response.status
 
         if status == "error" or response.payload is None:
@@ -96,7 +113,6 @@ def get_asgi_app(user_app_path: str, serve_mode: ServeMode) -> FastAPI:
     # Streaming
 
     async def _stream_session_init(websocket: WebSocket):
-
         """
         Waits for the client to provide a session id to initialise the stream.
         Returns the session id received.
@@ -107,8 +123,7 @@ def get_asgi_app(user_app_path: str, serve_mode: ServeMode) -> FastAPI:
             req_message_raw = await websocket.receive_json()
 
             try:
-                req_message = StreamsyncWebsocketIncoming.parse_obj(
-                    req_message_raw)
+                req_message = StreamsyncWebsocketIncoming.parse_obj(req_message_raw)
             except ValidationError:
                 logging.error("Incorrect incoming request.")
                 return
@@ -118,17 +133,15 @@ def get_asgi_app(user_app_path: str, serve_mode: ServeMode) -> FastAPI:
         return session_id
 
     async def _stream_incoming_requests(websocket: WebSocket, session_id: str):
-
         """
-        Handles incoming requests from client. 
+        Handles incoming requests from client.
         """
 
         while True:
             req_message_raw = await websocket.receive_json()
 
             try:
-                req_message = StreamsyncWebsocketIncoming.parse_obj(
-                    req_message_raw)
+                req_message = StreamsyncWebsocketIncoming.parse_obj(req_message_raw)
             except ValidationError:
                 logging.error("Incorrect incoming request.")
                 return
@@ -136,7 +149,7 @@ def get_asgi_app(user_app_path: str, serve_mode: ServeMode) -> FastAPI:
             response = StreamsyncWebsocketOutgoing(
                 messageType=f"{req_message.type}Response",
                 trackingId=req_message.trackingId,
-                payload=None
+                payload=None,
             )
 
             is_session_ok = await app_runner.check_session(session_id)
@@ -148,26 +161,27 @@ def get_asgi_app(user_app_path: str, serve_mode: ServeMode) -> FastAPI:
 
             if req_message.type == "event":
                 apsr = await app_runner.handle_event(
-                    session_id, StreamsyncEvent(
+                    session_id,
+                    StreamsyncEvent(
                         type=req_message.payload["type"],
                         instancePath=req_message.payload["instancePath"],
-                        payload=req_message.payload["payload"]
-                    ))
+                        payload=req_message.payload["payload"],
+                    ),
+                )
                 if apsr is not None and apsr.payload is not None:
-                    res_payload = typing.cast(
-                        EventResponsePayload, apsr.payload).dict()
+                    res_payload = typing.cast(EventResponsePayload, apsr.payload).dict()
             if serve_mode == "edit":
                 if req_message.type == "componentUpdate":
                     await app_runner.update_components(
-                        session_id, ComponentUpdateRequestPayload(
+                        session_id,
+                        ComponentUpdateRequestPayload(
                             components=req_message.payload["components"]
-                        ))
+                        ),
+                    )
                 elif req_message.type == "codeSaveRequest":
-                    app_runner.save_code(
-                        session_id, req_message.payload["code"])
+                    app_runner.save_code(session_id, req_message.payload["code"])
                 elif req_message.type == "codeUpdate":
-                    app_runner.update_code(
-                        session_id, req_message.payload["code"])
+                    app_runner.update_code(session_id, req_message.payload["code"])
 
             if res_payload is not None:
                 response.payload = res_payload
@@ -178,12 +192,12 @@ def get_asgi_app(user_app_path: str, serve_mode: ServeMode) -> FastAPI:
                 return
 
     async def _stream_outgoing_announcements(websocket: WebSocket):
-
         """
         Handles outgoing communications to client (announcements).
         """
 
         from asyncio import sleep
+
         code_version = app_runner.get_run_code_version()
         while True:
             await sleep(1)
@@ -195,20 +209,17 @@ def get_asgi_app(user_app_path: str, serve_mode: ServeMode) -> FastAPI:
             announcement = StreamsyncWebsocketOutgoing(
                 messageType="announcement",
                 trackingId=-1,
-                payload={
-                    "announce": "codeUpdate"
-                }
+                payload={"announce": "codeUpdate"},
             )
 
             try:
                 await websocket.send_json(announcement.dict())
-            except (WebSocketDisconnect):
+            except WebSocketDisconnect:
                 return
 
     @asgi_app.websocket("/api/stream")
     async def stream(websocket: WebSocket):
-
-        """ Initialises incoming and outgoing communications on the stream. """
+        """Initialises incoming and outgoing communications on the stream."""
 
         await websocket.accept()
 
@@ -227,8 +238,7 @@ def get_asgi_app(user_app_path: str, serve_mode: ServeMode) -> FastAPI:
             await websocket.close(code=1008)  # Invalid permissions
             return
 
-        task1 = asyncio.create_task(
-            _stream_incoming_requests(websocket, session_id))
+        task1 = asyncio.create_task(_stream_incoming_requests(websocket, session_id))
         task2 = asyncio.create_task(_stream_outgoing_announcements(websocket))
 
         try:
@@ -240,7 +250,7 @@ def get_asgi_app(user_app_path: str, serve_mode: ServeMode) -> FastAPI:
 
     @asgi_app.on_event("shutdown")
     async def shutdown_event():
-        """ Shuts down the AppRunner when the server is shut down. """
+        """Shuts down the AppRunner when the server is shut down."""
 
         app_runner.shut_down()
 
@@ -248,12 +258,14 @@ def get_asgi_app(user_app_path: str, serve_mode: ServeMode) -> FastAPI:
 
     user_app_static_path = os.path.join(user_app_path, "static")
     asgi_app.mount(
-        "/static", StaticFiles(directory=user_app_static_path), name="user_static")
+        "/static", StaticFiles(directory=user_app_static_path), name="user_static"
+    )
 
     server_path = os.path.dirname(__file__)
     server_static_path = os.path.join(server_path, "static")
     asgi_app.mount(
-        "/", StaticFiles(directory=server_static_path, html=True), name="server_static")
+        "/", StaticFiles(directory=server_static_path, html=True), name="server_static"
+    )
 
     # Return
 
@@ -264,7 +276,8 @@ def print_init_message(run_name: str, port: int, host: str):
     GREEN_TOKEN = "\033[92m"
     END_TOKEN = "\033[0m"
 
-    print(f"""{ GREEN_TOKEN }
+    print(
+        f"""{ GREEN_TOKEN }
      _                                     
  ___| |_ ___ ___ ___ _____ ___ _ _ ___ ___ 
 |_ -|  _|  _| -_| .'|     |_ -| | |   |  _|
@@ -273,11 +286,12 @@ def print_init_message(run_name: str, port: int, host: str):
 
  {END_TOKEN}{run_name} is available at:{END_TOKEN}{GREEN_TOKEN} http://{host}:{port}
     
-{END_TOKEN}""")
+{END_TOKEN}"""
+    )
 
 
 def serve(app_path: str, mode: ServeMode, port, host):
-    """ Initialises the web server. """
+    """Initialises the web server."""
 
     asgi_app = get_asgi_app(app_path, mode)
 
@@ -286,5 +300,10 @@ def serve(app_path: str, mode: ServeMode, port, host):
 
     log_level = "warning"
 
-    uvicorn.run(asgi_app, host=host,
-                port=port, log_level=log_level, ws_max_size=MAX_WEBSOCKET_MESSAGE_SIZE)
+    uvicorn.run(
+        asgi_app,
+        host=host,
+        port=port,
+        log_level=log_level,
+        ws_max_size=MAX_WEBSOCKET_MESSAGE_SIZE,
+    )

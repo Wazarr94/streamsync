@@ -1,4 +1,5 @@
 from typing import Any, Dict, List, Literal, Optional, Protocol, Tuple, TypedDict
+
 from pydantic import BaseModel
 
 
@@ -22,8 +23,15 @@ class Readable(Protocol):
 
 
 ServeMode = Literal["run", "edit"]
-MessageType = Literal["sessionInit", "componentUpdate",
-                      "event", "codeUpdate", "codeSave", "checkSession", "keepAlive"]
+MessageType = Literal[
+    "sessionInit",
+    "componentUpdate",
+    "event",
+    "codeUpdate",
+    "codeSave",
+    "checkSession",
+    "keepAlive",
+]
 
 # Web server models
 
@@ -61,6 +69,7 @@ class StreamsyncWebsocketOutgoing(BaseModel):
     messageType: str
     trackingId: int
     payload: Optional[Dict[str, Any]]
+
 
 # AppProcessServer Requests
 
@@ -101,8 +110,7 @@ class EventRequest(AppProcessServerRequest):
     payload: StreamsyncEvent
 
 
-AppProcessServerRequestPacket = Tuple[int,
-                                      Optional[str], AppProcessServerRequest]
+AppProcessServerRequestPacket = Tuple[int, Optional[str], AppProcessServerRequest]
 
 # AppProcessServer Responses
 
@@ -137,8 +145,7 @@ class EventResponse(AppProcessServerResponse):
     payload: Optional[EventResponsePayload]
 
 
-AppProcessServerResponsePacket = Tuple[int,
-                                       Optional[str], AppProcessServerResponse]
+AppProcessServerResponsePacket = Tuple[int, Optional[str], AppProcessServerResponse]
 
 
 class StreamsyncEventResult(TypedDict):

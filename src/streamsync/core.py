@@ -1,24 +1,29 @@
+import base64
 import contextlib
 import copy
 import datetime
 import inspect
-import logging
+import io
+import json
+import math
+import re
 import secrets
 import sys
 import time
 import traceback
-from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple, Union
 import urllib.request
-import base64
-import io
-import re
-import json
-import math
-from streamsync.ss_types import Readable, InstancePath, StreamsyncEvent, StreamsyncEventResult, StreamsyncFileItem
+from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple, Union
+
+from streamsync.ss_types import (
+    InstancePath,
+    Readable,
+    StreamsyncEvent,
+    StreamsyncEventResult,
+    StreamsyncFileItem,
+)
 
 
 class Config:
-
     is_mail_enabled_for_log: bool = False
     mode: str = "run"
 
@@ -34,11 +39,10 @@ class FileWrapper:
     def __init__(self, file: Union[Readable, str], mime_type: Optional[str] = None):
         if not file:
             raise ValueError("Must specify a file.")
-        if not (
-                callable(getattr(file, "read", None)) or
-                isinstance(file, str)):
+        if not (callable(getattr(file, "read", None)) or isinstance(file, str)):
             raise ValueError(
-                "File must provide a read() method or contain a string with a path to a local file.")
+                "File must provide a read() method or contain a string with a path to a local file."
+            )
         self.file = file
         self.mime_type = mime_type
 
@@ -109,25 +113,24 @@ class StateSerialiser:
         # Checking the MRO allows to determine object type without creating dependencies
         # to these packages
 
-        v_mro = [
-            f"{x.__module__}.{x.__name__}" for x in inspect.getmro(type(v))]
+        v_mro = [f"{x.__module__}.{x.__name__}" for x in inspect.getmro(type(v))]
 
         if "matplotlib.figure.Figure" in v_mro:
             return self._serialise_matplotlib_fig(v)
         if "numpy.ndarray" in v_mro:
             return self._serialise_list_recursively(v.tolist())
         if "pandas.core.frame.DataFrame" in v_mro:
-            return self._serialise_dict_recursively({
-                "data": v.to_dict(),
-                "metadata": {}
-            })
+            return self._serialise_dict_recursively(
+                {"data": v.to_dict(), "metadata": {}}
+            )
 
         if hasattr(v, "to_dict") and callable(v.to_dict):
             # Covers Altair charts, Plotly graphs
             return self._serialise_dict_recursively(v.to_dict())
 
         raise StateSerialiserException(
-            f"Object of type { type(v) } (MRO: {v_mro}) cannot be serialised.")
+            f"Object of type { type(v) } (MRO: {v_mro}) cannot be serialised."
+        )
 
     def _serialise_dict_recursively(self, d: Dict) -> Dict:
         return {str(k): self.serialise(v) for k, v in d.items()}
@@ -180,7 +183,8 @@ class StateProxy:
     def __setitem__(self, key, raw_value) -> None:
         if not isinstance(key, str):
             raise ValueError(
-                f"State keys must be strings. Received {str(key)} ({type(key)}).")
+                f"State keys must be strings. Received {str(key)} ({type(key)})."
+            )
 
         # Items that are dictionaries are converted to StateProxy instances
 
@@ -199,8 +203,9 @@ class StateProxy:
     # It should be renamed so it's not confused with a simple getter
     # extract_mutations
     def get_mutations_as_dict(self) -> Dict[str, Any]:
-        serialised_mutations: Dict[str, Union[Dict,
-                                              List, str, bool, int, float, None]] = {}
+        serialised_mutations: Dict[
+            str, Union[Dict, List, str, bool, int, float, None]
+        ] = {}
         for key, value in self.state.items():
             if key.startswith("_"):
                 continue
@@ -222,7 +227,8 @@ class StateProxy:
                     serialised_value = state_serialiser.serialise(value)
                 except BaseException:
                     raise ValueError(
-                        f"""Couldn't serialise value of type "{ type(value) }" for key "{ key }".""")
+                        f"""Couldn't serialise value of type "{ type(value) }" for key "{ key }"."""
+                    )
                 serialised_mutations[key] = serialised_value
 
         self.mutated = set()
@@ -238,12 +244,13 @@ class StateProxy:
                 serialised_value = state_serialiser.serialise(value)
             except BaseException:
                 raise ValueError(
-                    f"""Couldn't serialise value of type "{ type(value) }" for key "{ key }".""")
+                    f"""Couldn't serialise value of type "{ type(value) }" for key "{ key }"."""
+                )
             serialised[key] = serialised_value
         return serialised
 
 
-class StreamsyncState():
+class StreamsyncState:
 
     """
     Root state. Comprises user configurable state and
@@ -261,7 +268,7 @@ class StreamsyncState():
 
     @classmethod
     def get_new(cls):
-        """ Returns a new StreamsyncState instance set to the initial state."""
+        """Returns a new StreamsyncState instance set to the initial state."""
 
         return initial_state.get_clone()
 
@@ -271,10 +278,12 @@ class StreamsyncState():
             cloned_mail = copy.deepcopy(self.mail)
         except BaseException:
             substitute_state = StreamsyncState()
-            substitute_state.add_log_entry("error",
-                                           "Cannot clone state",
-                                           "The state may contain unpickable objects, such as modules.",
-                                           traceback.format_exc())
+            substitute_state.add_log_entry(
+                "error",
+                "Cannot clone state",
+                "The state may contain unpickable objects, such as modules.",
+                traceback.format_exc(),
+            )
             return substitute_state
         return StreamsyncState(cloned_user_state, cloned_mail)
 
@@ -288,42 +297,48 @@ class StreamsyncState():
         return self.user_state.__contains__(key)
 
     def add_mail(self, type: str, payload: Any) -> None:
-        mail_item = {
-            "type": type,
-            "payload": payload
-        }
+        mail_item = {"type": type, "payload": payload}
         self.mail.insert(0, mail_item)
 
-    def add_notification(self, type: Literal["info", "success", "warning", "error"], title: str, message: str) -> None:
-        self.add_mail("notification", {
-            "type": type,
-            "title": title,
-            "message": message,
-        })
+    def add_notification(
+        self,
+        type: Literal["info", "success", "warning", "error"],
+        title: str,
+        message: str,
+    ) -> None:
+        self.add_mail(
+            "notification",
+            {
+                "type": type,
+                "title": title,
+                "message": message,
+            },
+        )
 
-    def add_log_entry(self, type: str, title: str, message: str, code: Optional[str] = None) -> None:
+    def add_log_entry(
+        self, type: str, title: str, message: str, code: Optional[str] = None
+    ) -> None:
         if not Config.is_mail_enabled_for_log:
             return
         shortened_message = None
         if len(message) > StreamsyncState.LOG_ENTRY_MAX_LEN:
-            shortened_message = message[0:StreamsyncState.LOG_ENTRY_MAX_LEN] + "..."
+            shortened_message = message[0 : StreamsyncState.LOG_ENTRY_MAX_LEN] + "..."
         else:
             shortened_message = message
-        self.add_mail("logEntry", {
-            "type": type,
-            "title": title,
-            "message": shortened_message,
-            "code": code
-        })
+        self.add_mail(
+            "logEntry",
+            {"type": type, "title": title, "message": shortened_message, "code": code},
+        )
 
     def file_download(self, data: Any, file_name: str):
         if not isinstance(data, (bytes, FileWrapper, BytesWrapper)):
             raise ValueError(
-                "Data for a fileDownload mail must be bytes, a FileWrapper or a BytesWrapper.")
-        self.add_mail("fileDownload", {
-            "data": state_serialiser.serialise(data),
-            "fileName": file_name
-        })
+                "Data for a fileDownload mail must be bytes, a FileWrapper or a BytesWrapper."
+            )
+        self.add_mail(
+            "fileDownload",
+            {"data": state_serialiser.serialise(data), "fileName": file_name},
+        )
 
     def open_url(self, url: str):
         self.add_mail("openUrl", url)
@@ -337,11 +352,11 @@ class StreamsyncState():
     def set_route_vars(self, route_vars: Dict[str, str]) -> None:
         self.add_mail("routeVarsChange", route_vars)
 
+
 # TODO Consider switching Component to use Pydantic
 
 
 class Component:
-
     def __init__(self, id: str, type: str, content: Dict[str, str] = {}):
         self.id = id
         self.type = type
@@ -370,7 +385,6 @@ class Component:
 
 
 class ComponentManager:
-
     def __init__(self) -> None:
         self.counter: int = 0
         self.components: Dict[str, Component] = {}
@@ -378,8 +392,9 @@ class ComponentManager:
         self.attach(root_component)
 
     def get_descendents(self, parent_id: str) -> List[Component]:
-        children = list(filter(lambda c: c.parentId == parent_id,
-                               self.components.values()))
+        children = list(
+            filter(lambda c: c.parentId == parent_id, self.components.values())
+        )
         desc = children.copy()
         for child in children:
             desc += self.get_descendents(child.id)
@@ -398,8 +413,7 @@ class ComponentManager:
                 continue
             self.components.pop(component_id)
         for component_id, sc in serialised_components.items():
-            component = Component(
-                component_id, sc["type"], sc["content"])
+            component = Component(component_id, sc["type"], sc["content"])
             component.parentId = sc.get("parentId")
             component.handlers = sc.get("handlers")
             component.position = sc.get("position")
@@ -427,7 +441,6 @@ class EventDeserialiser:
         self.evaluator = Evaluator(session_state)
 
     def transform(self, ev: StreamsyncEvent) -> None:
-
         # Events without payloads are safe
         # This includes non-custom events such as click
 
@@ -441,8 +454,7 @@ class EventDeserialiser:
         func_name = "_transform_" + custom_event_name.replace("-", "_")
         if not hasattr(self, func_name):
             ev.payload = {}
-            raise ValueError(
-                "No payload transformer available for custom event type.")
+            raise ValueError("No payload transformer available for custom event type.")
         tf_func = getattr(self, func_name)
         try:
             tf_payload = tf_func(ev)
@@ -456,7 +468,8 @@ class EventDeserialiser:
         payload = ev.payload
         instance_path = ev.instancePath
         options = self.evaluator.evaluate_field(
-            instance_path, "options", True, """{ "a": "Option A", "b": "Option B" }""")
+            instance_path, "options", True, """{ "a": "Option A", "b": "Option B" }"""
+        )
         if not isinstance(options, dict):
             raise ValueError("Invalid value for options")
         if payload not in options.keys():
@@ -467,12 +480,12 @@ class EventDeserialiser:
         payload = ev.payload
         instance_path = ev.instancePath
         options = self.evaluator.evaluate_field(
-            instance_path, "options", True, """{ "a": "Option A", "b": "Option B" }""")
+            instance_path, "options", True, """{ "a": "Option A", "b": "Option B" }"""
+        )
         if not isinstance(options, dict):
             raise ValueError("Invalid value for options")
         if not isinstance(payload, list):
-            raise ValueError(
-                "Invalid multiple options payload. Expected a list.")
+            raise ValueError("Invalid multiple options payload. Expected a list.")
         if not all(item in options.keys() for item in payload):
             raise ValueError("Unauthorised option")
         return payload
@@ -481,10 +494,7 @@ class EventDeserialiser:
         payload = ev.payload
         page_key = payload.get("pageKey")
         route_vars = dict(payload.get("routeVars"))
-        tf_payload = {
-            "page_key": page_key,
-            "route_vars": route_vars
-        }
+        tf_payload = {"page_key": page_key, "route_vars": route_vars}
         return tf_payload
 
     def _transform_change(self, ev) -> str:
@@ -505,7 +515,7 @@ class EventDeserialiser:
         return {
             "name": file_item.get("name"),
             "type": file_item.get("type"),
-            "data": urllib.request.urlopen(data).read()
+            "data": urllib.request.urlopen(data).read(),
         }
 
     def _transform_file_change(self, ev) -> List[Dict]:
@@ -523,7 +533,8 @@ class EventDeserialiser:
             datetime.date.fromisoformat(payload)
         except ValueError:
             raise ValueError(
-                "Date must be in YYYY-MM-DD format or another valid ISO 8601 format.")
+                "Date must be in YYYY-MM-DD format or another valid ISO 8601 format."
+            )
 
         return payload
 
@@ -540,7 +551,13 @@ class Evaluator:
     def __init__(self, session_state: StreamsyncState):
         self.ss = session_state
 
-    def evaluate_field(self, instance_path: InstancePath, field_key: str, as_json=False, default_field_value="") -> Any:
+    def evaluate_field(
+        self,
+        instance_path: InstancePath,
+        field_key: str,
+        as_json=False,
+        default_field_value="",
+    ) -> Any:
         context_data = self.get_context_data(instance_path)
 
         def replacer(matched):
@@ -554,7 +571,8 @@ class Evaluator:
                 serialised_value = state_serialiser.serialise(expr_value)
             except BaseException:
                 raise ValueError(
-                    f"""Couldn't serialise value of type "{ type(expr_value) }" when evaluating field "{ field_key }".""")
+                    f"""Couldn't serialise value of type "{ type(expr_value) }" when evaluating field "{ field_key }"."""
+                )
 
             if as_json:
                 return json.dumps(serialised_value)
@@ -581,25 +599,31 @@ class Evaluator:
                 continue
             if i + 1 >= len(instance_path):
                 continue
-            repeater_instance_path = instance_path[0:i+1]
-            next_instance_path = instance_path[0:i+2]
+            repeater_instance_path = instance_path[0 : i + 1]
+            next_instance_path = instance_path[0 : i + 2]
             instance_number = next_instance_path[-1]["instanceNumber"]
             repeater_object = self.evaluate_field(
-                repeater_instance_path, "repeaterObject", True, """{ "a": { "desc": "Option A" }, "b": { "desc": "Option B" } }""")
+                repeater_instance_path,
+                "repeaterObject",
+                True,
+                """{ "a": { "desc": "Option A" }, "b": { "desc": "Option B" } }""",
+            )
             key_variable = self.evaluate_field(
-                repeater_instance_path, "keyVariable", False, "itemId")
+                repeater_instance_path, "keyVariable", False, "itemId"
+            )
             value_variable = self.evaluate_field(
-                repeater_instance_path, "valueVariable", False, "item")
+                repeater_instance_path, "valueVariable", False, "item"
+            )
 
             repeater_items: List[Tuple[Any, Any]] = []
             if isinstance(repeater_object, dict):
                 repeater_items = list(repeater_object.items())
             elif isinstance(repeater_object, list):
-                repeater_items = [(k, v)
-                                  for (k, v) in enumerate(repeater_object)]
+                repeater_items = [(k, v) for (k, v) in enumerate(repeater_object)]
             else:
                 raise ValueError(
-                    "Cannot produce context. Repeater object must evaluate to a dictionary.")
+                    "Cannot produce context. Repeater object must evaluate to a dictionary."
+                )
 
             context[key_variable] = repeater_items[instance_number][0]
             context[value_variable] = repeater_items[instance_number][1]
@@ -614,7 +638,8 @@ class Evaluator:
 
         if not isinstance(state_ref, StateProxy):
             raise ValueError(
-                f"Incorrect state reference. Reference \"{flat_state_ref}\" isn't part of a StateProxy.")
+                f'Incorrect state reference. Reference "{flat_state_ref}" isn\'t part of a StateProxy.'
+            )
 
         state_ref[nested_key[-1]] = value
 
@@ -648,7 +673,12 @@ class StreamsyncSession:
     Represents a session.
     """
 
-    def __init__(self, session_id: str, cookies: Optional[Dict[str, str]], headers: Optional[Dict[str, str]]) -> None:
+    def __init__(
+        self,
+        session_id: str,
+        cookies: Optional[Dict[str, str]],
+        headers: Optional[Dict[str, str]],
+    ) -> None:
         self.session_id = session_id
         self.cookies = cookies
         self.headers = headers
@@ -669,8 +699,7 @@ class SessionManager:
 
     IDLE_SESSION_MAX_SECONDS = 3600
     TOKEN_SIZE_BYTES = 32
-    hex_pattern = re.compile(
-        r"^[0-9a-fA-F]{" + str(TOKEN_SIZE_BYTES*2) + r"}$")
+    hex_pattern = re.compile(r"^[0-9a-fA-F]{" + str(TOKEN_SIZE_BYTES * 2) + r"}$")
 
     def __init__(self) -> None:
         self.sessions: Dict[str, StreamsyncSession] = {}
@@ -679,7 +708,9 @@ class SessionManager:
     def add_verifier(self, verifier: Callable) -> None:
         self.verifiers.append(verifier)
 
-    def _verify_before_new_session(self, cookies: Optional[Dict] = None, headers: Optional[Dict] = None) -> bool:
+    def _verify_before_new_session(
+        self, cookies: Optional[Dict] = None, headers: Optional[Dict] = None
+    ) -> bool:
         for verifier in self.verifiers:
             arg_names = verifier.__code__.co_varnames
             args = []
@@ -695,7 +726,8 @@ class SessionManager:
                 pass
             else:
                 raise ValueError(
-                    "Invalid verifier return value. Must be True or False.")
+                    "Invalid verifier return value. Must be True or False."
+                )
         return True
 
     def _check_proposed_session_id(self, proposed_session_id: Optional[str]) -> bool:
@@ -705,7 +737,12 @@ class SessionManager:
             return True
         return False
 
-    def get_new_session(self, cookies: Optional[Dict] = None, headers: Optional[Dict] = None, proposed_session_id: Optional[str] = None) -> Optional[StreamsyncSession]:
+    def get_new_session(
+        self,
+        cookies: Optional[Dict] = None,
+        headers: Optional[Dict] = None,
+        proposed_session_id: Optional[str] = None,
+    ) -> Optional[StreamsyncSession]:
         if not self._check_proposed_session_id(proposed_session_id):
             return None
         if not self._verify_before_new_session(cookies, headers):
@@ -715,8 +752,7 @@ class SessionManager:
             new_id = self._generate_session_id()
         else:
             new_id = proposed_session_id
-        new_session = StreamsyncSession(
-            new_id, cookies, headers)
+        new_session = StreamsyncSession(new_id, cookies, headers)
         self.sessions[new_id] = new_session
         return new_session
 
@@ -735,8 +771,7 @@ class SessionManager:
         del self.sessions[session_id]
 
     def prune_sessions(self) -> None:
-        cutoff_timestamp = int(time.time()) - \
-            SessionManager.IDLE_SESSION_MAX_SECONDS
+        cutoff_timestamp = int(time.time()) - SessionManager.IDLE_SESSION_MAX_SECONDS
         prune_sessions = []
         for session_id, session in self.sessions.items():
             if session.last_active_timestamp < cutoff_timestamp:
@@ -765,7 +800,9 @@ class EventHandler:
             return
         self.evaluator.set_state(binding["stateRef"], payload)
 
-    def _call_handler_callable(self, event_type, target_component, instance_path, payload) -> Any:
+    def _call_handler_callable(
+        self, event_type, target_component, instance_path, payload
+    ) -> Any:
         streamsyncuserapp = sys.modules.get("streamsyncuserapp")
         if streamsyncuserapp is None:
             raise ValueError("Couldn't find app module (streamsyncuserapp).")
@@ -778,12 +815,12 @@ class EventHandler:
 
         if not hasattr(streamsyncuserapp, handler):
             raise ValueError(
-                f"""Invalid handler. Couldn't find the handler "{ handler }".""")
+                f"""Invalid handler. Couldn't find the handler "{ handler }"."""
+            )
         callable_handler = getattr(streamsyncuserapp, handler)
 
         if not callable(callable_handler):
-            raise ValueError(
-                "Invalid handler. The handler isn't a callable object.")
+            raise ValueError("Invalid handler. The handler isn't a callable object.")
 
         arg_names = callable_handler.__code__.co_varnames
         args = []
@@ -799,7 +836,7 @@ class EventHandler:
                 session_info = {
                     "id": self.session.session_id,
                     "cookies": self.session.cookies,
-                    "headers": self.session.headers
+                    "headers": self.session.headers,
                 }
                 args.append(session_info)
 
@@ -808,11 +845,7 @@ class EventHandler:
             result = callable_handler(*args)
         captured_stdout = f.getvalue()
         if captured_stdout:
-            self.session_state.add_log_entry(
-                "info",
-                "Stdout message",
-                captured_stdout
-            )
+            self.session_state.add_log_entry("info", "Stdout message", captured_stdout)
         return result
 
     def handle(self, ev: StreamsyncEvent) -> StreamsyncEventResult:
@@ -823,9 +856,16 @@ class EventHandler:
         except BaseException:
             ok = False
             self.session_state.add_notification(
-                "error", "Error", f"A deserialisation error occurred when handling event '{ ev.type }'.")
-            self.session_state.add_log_entry("error", "Deserialisation Failed",
-                                             f"The data sent might be corrupt. A runtime exception was raised when deserialising event '{ ev.type }'.", traceback.format_exc())
+                "error",
+                "Error",
+                f"A deserialisation error occurred when handling event '{ ev.type }'.",
+            )
+            self.session_state.add_log_entry(
+                "error",
+                "Deserialisation Failed",
+                f"The data sent might be corrupt. A runtime exception was raised when deserialising event '{ ev.type }'.",
+                traceback.format_exc(),
+            )
 
         result = None
         try:
@@ -835,13 +875,21 @@ class EventHandler:
 
             self._handle_binding(ev.type, target_component, ev.payload)
             result = self._call_handler_callable(
-                ev.type, target_component, instance_path, ev.payload)
+                ev.type, target_component, instance_path, ev.payload
+            )
         except BaseException:
             ok = False
-            self.session_state.add_notification("error", "Runtime Error", f"An error occurred when processing event '{ ev.type }'.",
-                                                )
-            self.session_state.add_log_entry("error", "Runtime Exception",
-                                             f"A runtime exception was raised when processing event '{ ev.type }'.", traceback.format_exc())
+            self.session_state.add_notification(
+                "error",
+                "Runtime Error",
+                f"An error occurred when processing event '{ ev.type }'.",
+            )
+            self.session_state.add_log_entry(
+                "error",
+                "Runtime Exception",
+                f"A runtime exception was raised when processing event '{ ev.type }'.",
+                traceback.format_exc(),
+            )
 
         return {"ok": ok, "result": result}
 
